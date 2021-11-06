@@ -1,0 +1,15 @@
+[package]
+name = "jtypes"
+version = "0.1.0"
+authors = ["Chris Moore <dev@chrismoore.dev>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/chrismooredev/jtypes-rs"
+description = "Structured Java type representations, providing guarantees about string contents or easy access to method/field signature components/etc"
+categories = ["parser-implementations", "data-structures"]
+keywords = ["java", "jvm", "serialization", "parsing"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+thiserror = "1.0.30"
