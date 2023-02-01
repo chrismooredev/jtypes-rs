@@ -1,6 +1,9 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::ops::Deref;
+
+use cesu8str::{Cesu8Str, Variant};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ClassnameParsingError {
@@ -18,13 +21,15 @@ pub enum ClassnameParsingError {
 	EmptyComponent(String),
 }
 
+/// A classname specifier in internal format (ex: `java/lang/Object`)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InternalClassname(Cow<'static, str>);
+pub struct InternalClassname(Cesu8Str<'static>);
 
+/// A classname specifier in binary format (ex: `java.lang.Object`)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BinaryClassname(Cow<'static, str>);
+pub struct BinaryClassname(Cesu8Str<'static>);
 
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GenericComponents<S> {
 	/// Package + terminal class name
 	base_class: Vec<S>,
@@ -32,14 +37,12 @@ pub struct GenericComponents<S> {
 	/// Arbitrary number of nested inner classes
 	inner_classes: Vec<S>,
 }
-pub type Components = GenericComponents<String>;
-pub type ComponentsRef<'a> = GenericComponents<&'a str>;
+// pub type Components = GenericComponents<Cesu8Str<'static>>;
+pub type Components<'a> = GenericComponents<Cesu8Str<'a>>;
+
+
 
 impl InternalClassname {
-	pub const JAVA_LANG_OBJECT: InternalClassname = unsafe { InternalClassname::new_unchecked_const("java/lang/Object") };
-	pub const JAVA_LANG_CLASS: InternalClassname = unsafe { InternalClassname::new_unchecked_const("java/lang/Class") };
-	pub const JAVA_LANG_STRING: InternalClassname = unsafe { InternalClassname::new_unchecked_const("java/lang/String") };
-	pub const JAVA_LANG_SYSTEM: InternalClassname = unsafe { InternalClassname::new_unchecked_const("java/lang/System") };
 
 	/// Creates a new class name using internal format (ex: `java/lang/Object`). Returns an error if it is invalid or empty.
 	pub fn new<IC: Into<Cow<'static, str>>>(cls: IC) -> Result<InternalClassname, ClassnameParsingError> {
@@ -47,17 +50,20 @@ impl InternalClassname {
 
 		verify_classname_str(&cls, '/')?;
 
+		let cls = Cesu8Str::from_utf8(cls, Variant::Java);
+
 		Ok(InternalClassname(cls))
 	}
 
-	/// Creates a new class name using internal format (ex: `java/lang/Object`).
-	/// 
-	/// # Safety
-	/// The internal name must be valid, otherwise unexpected behavior may occur in other functions.
-	/// 
-	/// Validation checking can be done with `InternalClassname::new(...)`
-	pub unsafe fn new_unchecked<IC: Into<String>>(cls: IC) -> InternalClassname {
-		InternalClassname(Cow::Owned(cls.into()))
+	pub fn new_with_cesu<'s, C: Into<Cesu8Str<'s>>>(cls: C) -> Result<InternalClassname, ClassnameParsingError> {
+		let cls: Cesu8Str<'s> = cls.into();
+
+		let as_str = cls.to_str();
+		verify_classname_str(&as_str, '/')?;
+
+		let cls = cls.to_variant(Variant::Java);
+
+		Ok(InternalClassname(cls.into_owned()))
 	}
 
 	/// Creates a new class name using internal format (ex: `java/lang/Object`).
@@ -66,22 +72,22 @@ impl InternalClassname {
 	/// The internal name must be valid, otherwise unexpected behavior may occur in other functions.
 	/// 
 	/// Validation checking can be done with `InternalClassname::new(...)`
-	pub const unsafe fn new_unchecked_const(cls: &'static str) -> InternalClassname {
-		InternalClassname(Cow::Borrowed(cls))
+	pub unsafe fn new_unchecked<'s, IC: Into<Cow<'s, str>>>(cls: IC) -> InternalClassname {
+		InternalClassname(Cesu8Str::from_utf8(cls, Variant::Java).into_owned())
 	}
 
-	pub fn as_str(&self) -> &str {
-		&*self.0
+	pub fn into_inner(self) -> Cesu8Str<'static> {
+		self.0
 	}
 
 	pub fn to_binary(&self) -> BinaryClassname {
 		BinaryClassname::from(self)
 	}
-	pub fn to_components(&self) -> Components {
-		Components::from(self)
+	pub fn to_components(&self) -> Components<'static> {
+		Components::from(self.clone())
 	}
-	pub fn as_components(&self) -> ComponentsRef<'_> {
-		ComponentsRef::from(self)
+	pub fn as_components(&self) -> Components<'_> {
+		Components::from(self)
 	}
 }
 impl BinaryClassname {
@@ -92,28 +98,21 @@ impl BinaryClassname {
 		
 		verify_classname_str(&cls, '.')?;
 		
-		Ok(BinaryClassname(cls))
+		Ok(BinaryClassname(Cesu8Str::from_utf8(cls, Variant::Java)))
 	}
-
 	
-	/// Creates a new class name using binary format (ex: `java.lang.Object`).
-	/// 
-	/// # Safety
-	/// The binary class name must be valid, otherwise unexpected behavior may occur in other functions.
-	/// 
-	/// Validation checking can be done with `BinaryClassname::new(...)`
-	pub const unsafe fn new_unchecked_const(cls: &'static str) -> BinaryClassname {
-		BinaryClassname(Cow::Borrowed(cls))
+	pub fn into_inner(self) -> Cesu8Str<'static> {
+		self.0
 	}
 
 	pub fn to_internal(&self) -> InternalClassname {
 		InternalClassname::from(self)
 	}
-	pub fn to_components(&self) -> Components {
-		Components::from(self)
+	pub fn to_components(&self) -> Components<'static> {
+		Components::from(self.clone())
 	}
-	pub fn as_components(&self) -> ComponentsRef<'_> {
-		ComponentsRef::from(self)
+	pub fn as_components(&self) -> Components<'_> {
+		Components::from(self)
 	}
 }
 
@@ -153,7 +152,8 @@ impl<S: AsRef<str>> GenericComponents<S> {
 			inner_classes: inner_class
 		})
 	}
-
+}
+impl<S> GenericComponents<S> {
 	/// Creates a new `Components` struct.
 	///
 	/// `class` contains the separated package and classname of the class.
@@ -204,18 +204,25 @@ impl<S: AsRef<str>> GenericComponents<S> {
 		&self.inner_classes
 	}
 }
-impl<'a, S: From<&'a str>> GenericComponents<S> {
+impl<'a> GenericComponents<Cesu8Str<'a>> {
 	/// Used internally to convert internal and binary class descriptors into individual components
-	fn split_from_string(string: &'a str, sep: char) -> GenericComponents<S> {
+	fn split_from_string<'s: 'a>(string: &'s Cesu8Str<'a>, sep: char) -> GenericComponents<Cesu8Str<'a>> {
 		// Note: Inner classes have a dollar sign prefix, specified after the base class
 		// As it uses the same separater, it does not have to be specially treated here
 
 		// TODO: see how this interacts with arrays/etc. Is that even necessary here?
 
-		let mut inner_iter = string.split('$');
+		let raw = string.as_bytes();
+
+		// let string = string.as_ref();
+		let mut inner_iter = raw.split(|&b| b == b'$');
 		let base_class = inner_iter.next().expect("there should be at least one base class");
-		let base_class: Vec<_> = base_class.split(sep).map(|s| s.into()).collect();
-		let inner_class = inner_iter.map(|s| s.into()).collect();
+		let base_class: Vec<_> = base_class.split(|&b| b == sep as u8)
+			.map(|s| Cesu8Str::from_cesu8(s, Variant::Java).unwrap())
+			.collect();
+		let inner_class = inner_iter
+			.map(|s| Cesu8Str::from_cesu8(s, Variant::Java).unwrap())
+			.collect();
 		assert!(!base_class.is_empty());
 		
 		GenericComponents {
@@ -275,7 +282,7 @@ impl<S: AsRef<str>> GenericComponents<S> {
 #[test]
 fn test_from_lifetimes() {
 	let intclsname = InternalClassname::new("java/util/HashMap$Node").unwrap();
-	let _gcstr: GenericComponents<&str> = (&intclsname).into();
+	let _gcstr: GenericComponents<Cesu8Str<'_>> = (&intclsname).into();
 }
 
 // Convert between types
@@ -289,7 +296,11 @@ impl From<&InternalClassname> for BinaryClassname {
 		// TODO: see how this interacts with arrays/etc. Is that even necessary here?
 		// TODO: provide implementation that changes underlying str? (eg no alloc) would need unsafe, likely not worth the effort for any usecases
 		
-		BinaryClassname(int.0.split('/').collect::<Vec<_>>().join(".").into())
+		if int.0.as_bytes().contains(&b'/') {
+			BinaryClassname(Cesu8Str::from_utf8(int.0.to_str().split('/').collect::<Vec<&str>>().join("."), Variant::Java))
+		} else {
+			BinaryClassname(int.0.clone())
+		}
 	}
 }
 impl From<&BinaryClassname> for InternalClassname {
@@ -298,21 +309,37 @@ impl From<&BinaryClassname> for InternalClassname {
 		// As it uses the same separater, it does not have to be specially treated here
 
 		// TODO: see how this interacts with arrays/etc. Is that even necessary here?
-		InternalClassname(bin.0.split('.').collect::<Vec<_>>().join("/").into())
+		if bin.0.as_bytes().contains(&b'.') {
+			InternalClassname(Cesu8Str::from_utf8(bin.0.to_str().split('.').collect::<Vec<&str>>().join("/"), Variant::Java))
+		} else {
+			InternalClassname(bin.0.clone())
+		}
 	}
 }
 impl From<InternalClassname> for BinaryClassname { fn from(item: InternalClassname) -> Self { (&item).into() } }
 impl From<BinaryClassname> for InternalClassname { fn from(item: BinaryClassname) -> Self { (&item).into() } }
 
 // InternalClassname <-> Components
-impl<'a, S: From<&'a str>> From<&'a InternalClassname> for GenericComponents<S> {
+impl From<InternalClassname> for GenericComponents<Cesu8Str<'static>> {
+	fn from(int: InternalClassname) -> Self {
+		let GenericComponents {
+			base_class,
+			inner_classes,
+		} = GenericComponents::split_from_string(&int.0, '/');
+		GenericComponents {
+			base_class: base_class.into_iter().map(Cesu8Str::into_owned).collect(),
+			inner_classes: inner_classes.into_iter().map(Cesu8Str::into_owned).collect(),
+		}
+	}
+}
+impl<'a> From<&'a InternalClassname> for GenericComponents<Cesu8Str<'a>> {
 	fn from(int: &'a InternalClassname) -> Self {
-		Self::split_from_string(int.0.as_ref(), '/')
+		Self::split_from_string(&int.0, '/')
 	}
 }
 impl<S: AsRef<str>> From<&GenericComponents<S>> for InternalClassname {
 	fn from(comp: &GenericComponents<S>) -> InternalClassname {
-		InternalClassname(comp.combine_to_string("/").into())
+		InternalClassname(Cesu8Str::from_utf8(comp.combine_to_string("/"), Variant::Java))
 	}
 }
 
@@ -320,14 +347,26 @@ impl From<InternalClassname> for GenericComponents<String> { fn from(item: Inter
 impl<S: AsRef<str>> From<GenericComponents<S>> for InternalClassname { fn from(item: GenericComponents<S>) -> Self { (&item).into() } }
 
 // BinaryClassname <-> Components
-impl<'a, S: From<&'a str>> From<&'a BinaryClassname> for GenericComponents<S> {
+impl From<BinaryClassname> for GenericComponents<Cesu8Str<'static>> {
+	fn from(int: BinaryClassname) -> Self {
+		let GenericComponents {
+			base_class,
+			inner_classes,
+		} = GenericComponents::split_from_string(&int.0, '.');
+		GenericComponents {
+			base_class: base_class.into_iter().map(Cesu8Str::into_owned).collect(),
+			inner_classes: inner_classes.into_iter().map(Cesu8Str::into_owned).collect(),
+		}
+	}
+}
+impl<'a> From<&'a BinaryClassname> for GenericComponents<Cesu8Str<'a>> {
 	fn from(int: &'a BinaryClassname) -> Self {
 		Self::split_from_string(&int.0, '.')
 	}
 }
 impl<S: AsRef<str>> From<&GenericComponents<S>> for BinaryClassname {
 	fn from(comp: &GenericComponents<S>) -> Self {
-		BinaryClassname(comp.combine_to_string(".").into())
+		BinaryClassname(Cesu8Str::from_utf8(comp.combine_to_string("."), Variant::Java))
 	}
 }
 impl From<BinaryClassname> for GenericComponents<String> { fn from(item: BinaryClassname) -> Self { item.into() } }
@@ -341,25 +380,25 @@ macro_rules! impl_classname_eq_no_components {
 		#[allow(clippy::cmp_owned)]
 		impl PartialEq<$second> for $first {
 			fn eq(&self, other: &$second) -> bool {
-				GenericComponents::<&str>::from(self) == GenericComponents::<&str>::from(other)
+				GenericComponents::<Cesu8Str>::from(self) == GenericComponents::<Cesu8Str>::from(other)
 			}
 		}
 		#[allow(clippy::cmp_owned)]
 		impl PartialEq<$first> for $second {
 			fn eq(&self, other: &$first) -> bool {
-				GenericComponents::<&str>::from(self) == GenericComponents::<&str>::from(other)
+				GenericComponents::<Cesu8Str>::from(self) == GenericComponents::<Cesu8Str>::from(other)
 			}
 		}
 		#[allow(clippy::cmp_owned)]
 		impl PartialOrd<$second> for $first {
 			fn partial_cmp(&self, other: &$second) -> Option<std::cmp::Ordering> {
-				GenericComponents::<&str>::from(self).partial_cmp(&GenericComponents::<&str>::from(other))
+				GenericComponents::<Cesu8Str>::from(self).partial_cmp(&GenericComponents::<Cesu8Str>::from(other))
 			}
 		}
 		#[allow(clippy::cmp_owned)]
 		impl PartialOrd<$first> for $second {
 			fn partial_cmp(&self, other: &$first) -> Option<std::cmp::Ordering> {
-				GenericComponents::<&str>::from(self).partial_cmp(&GenericComponents::<&str>::from(other))
+				GenericComponents::<Cesu8Str>::from(self).partial_cmp(&GenericComponents::<Cesu8Str>::from(other))
 			}
 		}
 	}
@@ -368,59 +407,32 @@ macro_rules! impl_classname_eq_no_components {
 macro_rules! impl_classname_eq_one_components {
 	($first: ty) => {
 		#[allow(clippy::cmp_owned)]
-		impl<S: AsRef<str>> PartialEq<GenericComponents<S>> for $first {
-			fn eq(&self, other: &GenericComponents<S>) -> bool {
-				GenericComponents::<&str>::from(self) == other.as_str()
+		impl PartialEq<GenericComponents<Cesu8Str<'_>>> for $first {
+			fn eq(&self, other: &GenericComponents<Cesu8Str<'_>>) -> bool {
+				GenericComponents::<Cesu8Str>::from(self) == *other
 			}
 		}
 		#[allow(clippy::cmp_owned)]
-		impl<S: AsRef<str>> PartialEq<$first> for GenericComponents<S> {
+		impl PartialEq<$first> for GenericComponents<Cesu8Str<'_>> {
 			fn eq(&self, other: &$first) -> bool {
-				GenericComponents::<&str>::from(other) == self.as_str()
+				GenericComponents::<Cesu8Str>::from(other) == *self
 			}
 		}
 		
 		#[allow(clippy::cmp_owned)]
-		impl<S: AsRef<str>> PartialOrd<GenericComponents<S>> for $first {
-			fn partial_cmp(&self, other: &GenericComponents<S>) -> Option<std::cmp::Ordering> {
-				GenericComponents::<&str>::from(self).partial_cmp(&other.as_str())
+		impl PartialOrd<GenericComponents<Cesu8Str<'_>>> for $first {
+			fn partial_cmp(&self, other: &GenericComponents<Cesu8Str<'_>>) -> Option<std::cmp::Ordering> {
+				GenericComponents::<Cesu8Str>::from(self).partial_cmp(other)
 			}
 		}
 		#[allow(clippy::cmp_owned)]
-		impl<S: AsRef<str>> PartialOrd<$first> for GenericComponents<S> {
+		impl PartialOrd<$first> for GenericComponents<Cesu8Str<'_>> {
 			fn partial_cmp(&self, other: &$first) -> Option<std::cmp::Ordering> {
-				self.as_str().partial_cmp(&GenericComponents::<&str>::from(other))
+				self.partial_cmp(&GenericComponents::<Cesu8Str>::from(other))
 			}
 		}
 	}
 }
-
-impl<S1: AsRef<str>, S2: AsRef<str>> PartialEq<GenericComponents<S2>> for GenericComponents<S1> {
-	fn eq(&self, other: &GenericComponents<S2>) -> bool {
-		self.as_str() == other.as_str()
-	}
-}
-impl<S: AsRef<str>> Eq for GenericComponents<S> {}
-
-impl<S1: AsRef<str>, S2: AsRef<str>> PartialOrd<GenericComponents<S2>> for GenericComponents<S1> {
-	fn partial_cmp(&self, other: &GenericComponents<S2>) -> Option<std::cmp::Ordering> {
-		let this = self.as_str();
-		let other = other.as_str();
-
-		let bc = this.base_class.partial_cmp(&other.base_class).expect("there should always be a compare result for two Vec<&str>'s");
-		if bc != std::cmp::Ordering::Equal {
-			return Some(bc);
-		}
-
-		Some(this.inner_classes.partial_cmp(&other.inner_classes).expect("there should always be a compare result for two Vec<&str>'s"))
-	}
-}
-impl<S: AsRef<str>> Ord for GenericComponents<S> {
-	fn cmp(&self, other: &Self) -> std::cmp::Ordering { self.partial_cmp(other).unwrap() }
-}
-
-
-// PartialOrd, Ord, 
 
 // InternalClassname <-> BinaryClassname
 impl_classname_eq_no_components!(InternalClassname, BinaryClassname);
@@ -429,50 +441,39 @@ impl_classname_eq_one_components!(InternalClassname);
 // BinaryClassname <-> Components
 impl_classname_eq_one_components!(BinaryClassname);
 
-// Deref for InternalClassname/BinaryClassname
-impl AsRef<str> for InternalClassname {
-	fn as_ref(&self) -> &str {
-		&*self.0
-	}
-}
-impl AsRef<str> for BinaryClassname {
-	fn as_ref(&self) -> &str {
-		&*self.0
+
+macro_rules! impl_common_traits {
+	($classtype: ty) => {
+		impl fmt::Display for $classtype {
+			fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+				fmt::Display::fmt(&self.0, f)
+			}
+		}
+
+		impl From<$classtype> for String {
+			fn from(ic: $classtype) -> String {
+				ic.0.into_str().into_owned()
+			}
+		}
 	}
 }
 
-impl fmt::Display for InternalClassname {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		fmt::Display::fmt(&self.0, f)
-	}
-}
-impl fmt::Display for BinaryClassname {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		fmt::Display::fmt(&self.0, f)
-	}
-}
 
-impl std::convert::From<&InternalClassname> for InternalClassname {
-	fn from(ic: &InternalClassname) -> InternalClassname {
-		ic.clone()
-	}
-}
-impl std::convert::From<&BinaryClassname> for BinaryClassname {
-	fn from(ic: &BinaryClassname) -> BinaryClassname {
-		ic.clone()
-	}
-}
+impl Deref for InternalClassname { type Target = Cesu8Str<'static>; fn deref(&self) -> &Self::Target { &self.0 } }
+impl Deref for BinaryClassname { type Target = Cesu8Str<'static>; fn deref(&self) -> &Self::Target { &self.0 } }
+impl_common_traits!(InternalClassname);
+impl_common_traits!(BinaryClassname);
 
-impl From<InternalClassname> for String {
-	fn from(ic: InternalClassname) -> String {
-		Cow::into_owned(ic.0)
-	}
-}
-impl From<BinaryClassname> for String {
-	fn from(ic: BinaryClassname) -> String {
-		Cow::into_owned(ic.0)
-	}
-}
+// impl From<&InternalClassname> for InternalClassname {
+// 	fn from(ic: &InternalClassname) -> InternalClassname {
+// 		ic.clone()
+// 	}
+// }
+// impl From<&BinaryClassname> for BinaryClassname {
+// 	fn from(ic: &BinaryClassname) -> BinaryClassname {
+// 		ic.clone()
+// 	}
+// }
 
 fn verify_classname_str(cls: &str, sep: char) -> Result<(), ClassnameParsingError> {
 	let mut inners_iter = cls.split('$');

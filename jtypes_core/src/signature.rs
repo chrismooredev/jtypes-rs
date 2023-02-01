@@ -2,8 +2,9 @@
 use std::borrow::{Borrow, Cow};
 use std::fmt;
 
-use crate::{BinaryClassname, InternalClassname};
-use crate::names::ClassnameParsingError;
+use cesu8str::{Cesu8Str, Variant};
+
+use crate::names::{BinaryClassname, InternalClassname, ClassnameParsingError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JavaType {
@@ -195,6 +196,11 @@ impl<'a> From<&MethodSignatureDesc<'a>> for MethodSignature {
 		msd.as_str().parse().expect("already validated method signature should parse without error")
 	}
 }
+impl fmt::Display for MethodSignature {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(&self.serialize(), f)
+	}
+}
 
 
 #[derive(Debug, thiserror::Error)]
@@ -240,7 +246,8 @@ impl std::str::FromStr for MethodSignature {
 	}
 }
 
-/// A string-based, validated Java method signature. 
+/// A string-based, validated Java method signature.
+#[derive(Debug)]
 pub struct MethodSignatureDesc<'a>(Cow<'a, str>);
 impl<'a> MethodSignatureDesc<'a> {
 	pub fn new(s: &'a str) -> Result<Self, MethodSignatureParseError> {
@@ -248,8 +255,17 @@ impl<'a> MethodSignatureDesc<'a> {
 		// if the string is malformed, then it would have returned a bubble-up'd error
 		Ok(MethodSignatureDesc(Cow::Borrowed(s)))
 	}
+	pub unsafe fn new_unchecked(s: Cow<'a, str>) -> MethodSignatureDesc {
+		MethodSignatureDesc(s)
+	}
+	pub fn into_inner(self) -> Cow<'a, str> {
+		self.0
+	}
 	pub fn as_str(&self) -> &str {
 		self.0.borrow()
+	}
+	pub fn into_cesu8(self) -> Cesu8Str<'a> {
+		Cesu8Str::from_utf8(self.0, Variant::Java)
 	}
 }
 impl<'a> AsRef<str> for MethodSignatureDesc<'a> {
@@ -267,13 +283,18 @@ impl From<MethodSignature> for MethodSignatureDesc<'static> {
 		ms.serialize()
 	}
 }
+impl<'a> fmt::Display for MethodSignatureDesc<'a> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(&self.0, f)
+	}
+}
 
 #[test]
 fn signature_to_str() {
 	let sig = MethodSignature {
 		args: vec![
 			JavaType::Int,
-			JavaType::object(InternalClassname::JAVA_LANG_STRING),
+			JavaType::object(InternalClassname::new("java/lang/String").unwrap()),
 			JavaType::array(JavaType::Int),
 		],
 		rtn: JavaType::Long,
